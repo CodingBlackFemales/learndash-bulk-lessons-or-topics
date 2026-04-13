@@ -11,8 +11,11 @@ jQuery(document).ready(function($) {
     });
 
     $('form').on('submit', function(e) {
-        var checkedBoxes = $('input[name="confirm[]"]:checked').length;
-        if (checkedBoxes === 0) {
+        var $confirmInputs = $(this).find('input[name="confirm[]"]');
+        if ($confirmInputs.length === 0) {
+            return;
+        }
+        if ($confirmInputs.filter(':checked').length === 0) {
             e.preventDefault();
             alert('Please select at least one change to apply.');
         }
