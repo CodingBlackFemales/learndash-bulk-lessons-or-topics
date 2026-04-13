@@ -14,12 +14,6 @@
 // Exit if accessed directly
 if (!defined('ABSPATH')) exit;
 
-// Enable error reporting for debugging
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-ini_set('log_errors', 1);
-ini_set('error_log', dirname(__FILE__) . '/error_log.txt');
-
 class Extended_LearnDash_Bulk_Create {
     private $supported_post_types = array('sfwd-courses', 'sfwd-lessons', 'sfwd-topic', 'sfwd-quiz', 'sfwd-question');
     private $changes = array();
