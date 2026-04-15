@@ -125,12 +125,175 @@ class Extended_LearnDash_Bulk_Create {
         return true;
     }
 
+    /**
+     * Infer course ID from a lesson/topic step when CSV omits course_id.
+     *
+     * @param int $parent_step_id Lesson or topic post ID.
+     * @return int Course ID or 0.
+     */
+    private function infer_course_id_from_parent_step($parent_step_id) {
+        $parent_step_id = absint($parent_step_id);
+        if (!$parent_step_id || !function_exists('learndash_get_course_id')) {
+            return 0;
+        }
+        $cid = learndash_get_course_id($parent_step_id);
+        return $cid ? absint($cid) : 0;
+    }
+
+    /**
+     * Attach a lesson, topic, or quiz to the course outline (ld_course_steps) after settings are stored.
+     *
+     * @param int    $post_id    Step post ID.
+     * @param string $post_type  Post type slug.
+     * @param int    $course_id  Course ID.
+     * @param int    $lesson_ref Optional. Parent lesson ID, topic ID (for quizzes), or lesson ID for topics.
+     */
+    private function link_step_to_course_outline($post_id, $post_type, $course_id, $lesson_ref = 0) {
+        if (!function_exists('learndash_course_add_child_to_parent')) {
+            return;
+        }
+        $post_id = absint($post_id);
+        $course_id = absint($course_id);
+        $lesson_ref = absint($lesson_ref);
+        if (!$post_id || !$course_id) {
+            return;
+        }
+
+        if ('sfwd-lessons' === $post_type) {
+            learndash_course_add_child_to_parent($course_id, $post_id, $course_id);
+            return;
+        }
+
+        if ('sfwd-topic' === $post_type) {
+            if ($lesson_ref) {
+                learndash_course_add_child_to_parent($course_id, $post_id, $lesson_ref);
+            }
+            return;
+        }
+
+        if ('sfwd-quiz' === $post_type) {
+            if (!$lesson_ref) {
+                learndash_course_add_child_to_parent($course_id, $post_id, $course_id);
+                return;
+            }
+            $parent_type = get_post_type($lesson_ref);
+            if (in_array($parent_type, array('sfwd-lessons', 'sfwd-topic'), true)) {
+                learndash_course_add_child_to_parent($course_id, $post_id, $lesson_ref);
+            }
+        }
+    }
+
+    /**
+     * After course_id / lesson_id meta changes (e.g. bulk update confirm), re-sync LearnDash settings and course outline.
+     *
+     * @param int $post_id Step post ID.
+     */
+    private function sync_learndash_associations_from_meta($post_id) {
+        if (!function_exists('learndash_update_setting')) {
+            return;
+        }
+        $post = get_post($post_id);
+        if (!$post) {
+            return;
+        }
+
+        $course_id = absint(get_post_meta($post_id, 'course_id', true));
+        $lesson_ref = absint(get_post_meta($post_id, 'lesson_id', true));
+
+        if (in_array($post->post_type, array('sfwd-lessons', 'sfwd-topic', 'sfwd-quiz'), true)) {
+            if ($course_id) {
+                learndash_update_setting($post_id, 'course', $course_id);
+            } else {
+                learndash_update_setting($post_id, 'course', 0);
+            }
+        }
+
+        if (in_array($post->post_type, array('sfwd-topic', 'sfwd-quiz'), true)) {
+            if ($lesson_ref) {
+                learndash_update_setting($post_id, 'lesson', $lesson_ref);
+            } else {
+                learndash_update_setting($post_id, 'lesson', 0);
+            }
+        }
+
+        if ($course_id) {
+            $this->link_step_to_course_outline($post_id, $post->post_type, $course_id, $lesson_ref);
+        }
+    }
+
     private function update_associations($post_id, $content_type, $post_data) {
+        if (!function_exists('learndash_update_setting')) {
+            $this->update_associations_legacy_meta_only($post_id, $content_type, $post_data);
+            return;
+        }
+
         switch ($content_type) {
             case 'sfwd-lessons':
+                if (!empty($post_data['course_id'])) {
+                    $course_id = absint($post_data['course_id']);
+                    learndash_update_setting($post_id, 'course', $course_id);
+                    $this->link_step_to_course_outline($post_id, 'sfwd-lessons', $course_id, 0);
+                }
+                break;
+
+            case 'sfwd-topic':
+                $lesson_id = !empty($post_data['lesson_id']) ? absint($post_data['lesson_id']) : 0;
+                $course_id = !empty($post_data['course_id']) ? absint($post_data['course_id']) : 0;
+                if (!$course_id && $lesson_id) {
+                    $course_id = $this->infer_course_id_from_parent_step($lesson_id);
+                }
+                if ($course_id) {
+                    learndash_update_setting($post_id, 'course', $course_id);
+                }
+                if ($lesson_id) {
+                    learndash_update_setting($post_id, 'lesson', $lesson_id);
+                }
+                if ($course_id && $lesson_id) {
+                    $this->link_step_to_course_outline($post_id, 'sfwd-topic', $course_id, $lesson_id);
+                }
+                break;
+
+            case 'sfwd-quiz':
+                $lesson_ref = !empty($post_data['lesson_id']) ? absint($post_data['lesson_id']) : 0;
+                $course_id = !empty($post_data['course_id']) ? absint($post_data['course_id']) : 0;
+                if (!$course_id && $lesson_ref) {
+                    $course_id = $this->infer_course_id_from_parent_step($lesson_ref);
+                }
+                if ($course_id) {
+                    learndash_update_setting($post_id, 'course', $course_id);
+                }
+                if ($lesson_ref) {
+                    learndash_update_setting($post_id, 'lesson', $lesson_ref);
+                }
+                if ($course_id) {
+                    $this->link_step_to_course_outline($post_id, 'sfwd-quiz', $course_id, $lesson_ref);
+                }
+                break;
+
+            case 'sfwd-question':
+                if (!empty($post_data['quiz_id'])) {
+                    update_post_meta($post_id, 'quiz_id', absint($post_data['quiz_id']));
+                }
+                break;
+        }
+    }
+
+    /**
+     * Fallback when LearnDash APIs are unavailable (should not occur if sfwd-lms is active).
+     */
+    private function update_associations_legacy_meta_only($post_id, $content_type, $post_data) {
+        switch ($content_type) {
+            case 'sfwd-lessons':
+                if (!empty($post_data['course_id'])) {
+                    update_post_meta($post_id, 'course_id', absint($post_data['course_id']));
+                }
+                break;
             case 'sfwd-topic':
                 if (!empty($post_data['course_id'])) {
                     update_post_meta($post_id, 'course_id', absint($post_data['course_id']));
+                }
+                if (!empty($post_data['lesson_id'])) {
+                    update_post_meta($post_id, 'lesson_id', absint($post_data['lesson_id']));
                 }
                 break;
             case 'sfwd-quiz':
@@ -310,7 +473,20 @@ class Extended_LearnDash_Bulk_Create {
                 }
                 break;
             default:
-                update_post_meta($post_id, $field, $new_value);
+                if (in_array($field, array('course_id', 'lesson_id'), true)) {
+                    if (function_exists('learndash_update_setting')) {
+                        if ('course_id' === $field) {
+                            learndash_update_setting($post_id, 'course', absint($new_value));
+                        } else {
+                            learndash_update_setting($post_id, 'lesson', absint($new_value));
+                        }
+                        $this->sync_learndash_associations_from_meta($post_id);
+                    } else {
+                        update_post_meta($post_id, $field, $new_value);
+                    }
+                } else {
+                    update_post_meta($post_id, $field, $new_value);
+                }
                 break;
         }
 
