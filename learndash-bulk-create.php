@@ -18,6 +18,12 @@ class Extended_LearnDash_Bulk_Create {
     private $supported_post_types = array('sfwd-courses', 'sfwd-lessons', 'sfwd-topic', 'sfwd-quiz', 'sfwd-question');
     private $changes = array();
 
+    /** @var string */
+    private $bulk_notice_html = '';
+
+    /** @var string */
+    private $bulk_notice_type = 'success';
+
     public function __construct() {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'handle_form_submission'));
@@ -47,9 +53,61 @@ class Extended_LearnDash_Bulk_Create {
     }
 
     public function admin_page() {
-        include plugin_dir_path(__FILE__) . 'templates/admin_page.php';
+        if (!empty($_GET['eldbc_notice']) && current_user_can('manage_options')) {
+            $data = get_transient('eldbc_bulk_result_' . get_current_user_id());
+            if (is_array($data)) {
+                delete_transient('eldbc_bulk_result_' . get_current_user_id());
+                $entries = isset($data['entries']) && is_array($data['entries']) ? $data['entries'] : array();
+                $this->display_result_message(
+                    isset($data['count']) ? (int) $data['count'] : 0,
+                    isset($data['errors']) && is_array($data['errors']) ? $data['errors'] : array(),
+                    isset($data['action']) ? $data['action'] : 'update',
+                    $entries
+                );
+            }
+        }
+        include plugin_dir_path(__FILE__) . 'templates/admin-page.php';
     }
-    
+
+    /**
+     * Output completion notice (set earlier in the request by display_result_message).
+     */
+    public function render_bulk_admin_notice() {
+        if ($this->bulk_notice_html === '') {
+            return;
+        }
+
+        $message = $this->bulk_notice_html;
+        $type = $this->bulk_notice_type;
+        $this->bulk_notice_html = '';
+        $this->bulk_notice_type = 'success';
+
+        $args = array(
+            'type' => $type,
+            'dismissible' => true,
+            'id' => 'eldbc-bulk-result',
+            'paragraph_wrap' => false,
+        );
+
+        if (function_exists('wp_admin_notice')) {
+            wp_admin_notice($message, $args);
+            return;
+        }
+
+        $classes = 'notice';
+        if ('' !== $type) {
+            $classes .= ' notice-' . sanitize_html_class($type);
+        }
+        if (!empty($args['dismissible'])) {
+            $classes .= ' is-dismissible';
+        }
+        printf(
+            '<div id="%1$s" class="%2$s">%3$s</div>',
+            esc_attr($args['id']),
+            esc_attr($classes),
+            wp_kses_post($message)
+        );
+    }
 
     public function handle_form_submission() {
         if (!isset($_POST['submit']) || !check_admin_referer('extended_learndash_bulk_create', 'extended_learndash_bulk_create_nonce')) {
@@ -81,18 +139,23 @@ class Extended_LearnDash_Bulk_Create {
     private function process_create($content_type, $csv_data, $headers) {
         $created_count = 0;
         $errors = array();
+        $created_entries = array();
 
         foreach ($csv_data as $row_index => $row) {
             $post_data = array_combine($headers, $row);
             $result = $this->create_content($content_type, $post_data);
-            if ($result === true) {
+            if (is_int($result) && $result > 0) {
                 $created_count++;
+                $created_entries[] = array(
+                    'id' => $result,
+                    'title' => get_the_title($result),
+                );
             } else {
-                $errors[] = "Row " . ($row_index + 2) . ": " . $result;
+                $errors[] = 'Row ' . ($row_index + 2) . ': ' . $result;
             }
         }
 
-        $this->display_result_message($created_count, $errors);
+        $this->display_result_message($created_count, $errors, 'create', $created_entries);
     }
 
     private function process_update($content_type, $csv_data, $headers) {
@@ -119,10 +182,15 @@ class Extended_LearnDash_Bulk_Create {
             return sprintf(__('Error creating %s: %s', 'extended-learndash-bulk-create'), $content_type, $post_id->get_error_message());
         }
 
+        $post_id = (int) $post_id;
+        if ($post_id <= 0) {
+            return sprintf(__('Error creating %s: invalid post ID.', 'extended-learndash-bulk-create'), esc_html($content_type));
+        }
+
         $this->update_associations($post_id, $content_type, $post_data);
         $this->update_custom_fields($post_id, $post_data);
 
-        return true;
+        return $post_id;
     }
 
     /**
@@ -437,6 +505,7 @@ class Extended_LearnDash_Bulk_Create {
         $confirmed_changes = $_POST['confirm'];
         $updated_count = 0;
         $errors = array();
+        $affected_post_ids = array();
 
         foreach ($confirmed_changes as $change) {
             list($post_id, $field) = explode('|', $change);
@@ -446,12 +515,33 @@ class Extended_LearnDash_Bulk_Create {
             $result = $this->update_post_field($post_id, $field, $new_value);
             if ($result === true) {
                 $updated_count++;
+                $affected_post_ids[$post_id] = true;
             } else {
                 $errors[] = $result;
             }
         }
 
-        $this->display_result_message($updated_count, $errors, 'update');
+        $updated_entries = array();
+        foreach (array_keys($affected_post_ids) as $pid) {
+            $updated_entries[] = array(
+                'id' => $pid,
+                'title' => get_the_title($pid),
+            );
+        }
+
+        set_transient(
+            'eldbc_bulk_result_' . get_current_user_id(),
+            array(
+                'count' => $updated_count,
+                'errors' => $errors,
+                'action' => 'update',
+                'entries' => $updated_entries,
+            ),
+            120
+        );
+
+        wp_safe_redirect(admin_url('admin.php?page=extended-learndash-bulk-create&eldbc_notice=1'));
+        exit;
     }
 
     private function update_post_field($post_id, $field, $new_value) {
@@ -493,10 +583,51 @@ class Extended_LearnDash_Bulk_Create {
         return true;
     }
 
-    private function display_result_message($count, $errors, $action = 'create') {
+    /**
+     * @param int                  $count   Number of successful operations.
+     * @param array                $errors  Error strings.
+     * @param string               $action  'create' or 'update'.
+     * @param array<int, array{id:int, title:string}> $entries Posts to list with edit links.
+     */
+    private function display_result_message($count, $errors, $action = 'create', $entries = array()) {
         $action_text = $action === 'create' ? __('created', 'extended-learndash-bulk-create') : __('updated', 'extended-learndash-bulk-create');
-        $message = sprintf(__('%d items %s successfully.', 'extended-learndash-bulk-create'), $count, $action_text);
-        
+        $summary = sprintf(
+            _n(
+                '%d item %s successfully.',
+                '%d items %s successfully.',
+                $count,
+                'extended-learndash-bulk-create'
+            ),
+            $count,
+            $action_text
+        );
+        $message = '<p>' . esc_html($summary) . '</p>';
+
+        if (!empty($entries)) {
+            $list_heading = $action === 'create'
+                ? __('New content:', 'extended-learndash-bulk-create')
+                : __('Affected content:', 'extended-learndash-bulk-create');
+            $message .= '<p><strong>' . esc_html($list_heading) . '</strong></p>';
+            $message .= '<ul style="list-style:disc;margin-left:1.5em;">';
+            foreach ($entries as $entry) {
+                if (empty($entry['id'])) {
+                    continue;
+                }
+                $pid = (int) $entry['id'];
+                $title = isset($entry['title']) ? $entry['title'] : '';
+                if ($title === '') {
+                    $title = sprintf(__('Post %d', 'extended-learndash-bulk-create'), $pid);
+                }
+                $edit_link = get_edit_post_link($pid, 'raw');
+                if ($edit_link) {
+                    $message .= '<li><a href="' . esc_url($edit_link) . '">' . esc_html($title) . '</a></li>';
+                } else {
+                    $message .= '<li>' . esc_html($title) . '</li>';
+                }
+            }
+            $message .= '</ul>';
+        }
+
         if (!empty($errors)) {
             $message .= ' ' . sprintf(__('%d errors occurred:', 'extended-learndash-bulk-create'), count($errors));
             $message .= '<ul>';
@@ -506,7 +637,8 @@ class Extended_LearnDash_Bulk_Create {
             $message .= '</ul>';
         }
 
-        add_settings_error('extended_learndash_bulk_create', 'extended_learndash_bulk_create_result', $message, empty($errors) ? 'updated' : 'error');
+        $this->bulk_notice_html = $message;
+        $this->bulk_notice_type = empty($errors) ? 'success' : 'error';
     }
 }
 

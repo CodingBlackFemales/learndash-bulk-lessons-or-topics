@@ -4,6 +4,12 @@ if (!defined('ABSPATH')) {
 }
 ?>
 <div class="wrap">
+    <?php
+    global $extended_learndash_bulk_create;
+    if (isset($extended_learndash_bulk_create) && $extended_learndash_bulk_create instanceof Extended_LearnDash_Bulk_Create) {
+        $extended_learndash_bulk_create->render_bulk_admin_notice();
+    }
+    ?>
     <h1><?php _e('Extended LearnDash Bulk Create and Update', 'extended-learndash-bulk-create'); ?></h1>
     <form method="post" enctype="multipart/form-data">
         <?php wp_nonce_field('extended_learndash_bulk_create', 'extended_learndash_bulk_create_nonce'); ?>
