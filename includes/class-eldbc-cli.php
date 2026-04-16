@@ -44,9 +44,16 @@ class ELDBC_CLI {
 	 * [--overwrite]
 	 * : When set, updates posts that already exist (matched by optional ID or unique title).
 	 *
+	 * ## MULTISITE
+	 *
+	 * Pass WP-CLI's global `--url` (or a `wp-cli.yml` @alias) for the site you use in wp-admin.
+	 * Otherwise imports run against the default site and may be invisible when you open a subsite.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp learndash-bulk import ./course.csv --content-type=sfwd-lessons --media-dir=./export --overwrite
+	 *
+	 *     wp @dev-academy learndash-bulk import ./course.csv --content-type=sfwd-lessons --media-dir=./export --overwrite
 	 *
 	 * @when after_wp_load
 	 *
@@ -109,19 +116,42 @@ class ELDBC_CLI {
 			\WP_CLI::error( $result->get_error_message() );
 		}
 
-		\WP_CLI::success(
-			sprintf(
-				'Import finished. Created: %d | Updated: %d | Skipped: %d | Errors: %d',
-				(int) $result['created'],
-				(int) $result['updated'],
-				(int) $result['skipped'],
-				count( $result['errors'] )
-			)
-		);
+		$home = untrailingslashit( home_url( '/' ) );
 
-		if ( ! empty( $result['errors'] ) ) {
-			foreach ( $result['errors'] as $err ) {
-				\WP_CLI::warning( $err );
+		\WP_CLI::success( sprintf( 'Import finished (%s)', $home ) );
+
+		$created = (int) $result['created'];
+		$updated = (int) $result['updated'];
+		$skipped = (int) $result['skipped'];
+		$errors  = isset( $result['errors'] ) && is_array( $result['errors'] ) ? $result['errors'] : array();
+
+		\WP_CLI::log( sprintf( 'Created: %d', $created ) );
+		self::log_entry_lines( isset( $result['created_entries'] ) ? $result['created_entries'] : array() );
+
+		\WP_CLI::log( sprintf( 'Updated: %d', $updated ) );
+		self::log_entry_lines( isset( $result['updated_entries'] ) ? $result['updated_entries'] : array() );
+
+		\WP_CLI::log( sprintf( 'Skipped: %d', $skipped ) );
+		self::log_entry_lines( isset( $result['skipped_entries'] ) ? $result['skipped_entries'] : array() );
+
+		\WP_CLI::log( sprintf( 'Errors: %d', count( $errors ) ) );
+		foreach ( $errors as $err ) {
+			\WP_CLI::log( '- ' . $err );
+		}
+	}
+
+	/**
+	 * @param array<int,array{id:int,title:string}> $entries Import result entries.
+	 */
+	private static function log_entry_lines( array $entries ) {
+		foreach ( $entries as $entry ) {
+			$id    = isset( $entry['id'] ) ? (int) $entry['id'] : 0;
+			$title = isset( $entry['title'] ) ? (string) $entry['title'] : '';
+			$edit  = $id ? get_edit_post_link( $id, 'raw' ) : '';
+			if ( $edit ) {
+				\WP_CLI::log( sprintf( '- %s (%s)', $title, $edit ) );
+			} else {
+				\WP_CLI::log( sprintf( '- %s', $title ) );
 			}
 		}
 	}

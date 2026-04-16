@@ -181,6 +181,10 @@ class Extended_LearnDash_Bulk_Create {
 		if ( false === $raw ) {
 			return new WP_Error( 'eldbc_csv', __( 'Could not read CSV file.', 'extended-learndash-bulk-create' ) );
 		}
+		// Strip UTF-8 BOM so the first header column is "ID", not "\xEF\xBB\xBFID".
+		if ( strncmp( $raw, "\xEF\xBB\xBF", 3 ) === 0 ) {
+			$raw = substr( $raw, 3 );
+		}
 		$lines = preg_split( '/\r\n|\r|\n/', $raw );
 		if ( ! is_array( $lines ) || empty( $lines ) ) {
 			return new WP_Error( 'eldbc_csv', __( 'CSV is empty.', 'extended-learndash-bulk-create' ) );
@@ -440,7 +444,8 @@ class Extended_LearnDash_Bulk_Create {
 			return $pid;
 		}
 
-		$title = isset( $post_data['post_title'] ) ? trim( wp_unslash( $post_data['post_title'] ) ) : '';
+		// Same normalization as create_content() / wp_insert_post so title lookups match stored titles.
+		$title = isset( $post_data['post_title'] ) ? sanitize_text_field( wp_unslash( $post_data['post_title'] ) ) : '';
 		if ( $title === '' ) {
 			return new WP_Error( 'eldbc_title', __( 'post_title is required when ID is empty.', 'extended-learndash-bulk-create' ) );
 		}
@@ -674,8 +679,8 @@ class Extended_LearnDash_Bulk_Create {
 		}
 
 		$post_args = array(
-			'post_title'   => sanitize_text_field( $post_data['post_title'] ),
-			'post_content' => wp_kses_post( isset( $post_data['post_content'] ) ? $post_data['post_content'] : '' ),
+			'post_title'   => sanitize_text_field( wp_unslash( $post_data['post_title'] ) ),
+			'post_content' => wp_kses_post( isset( $post_data['post_content'] ) ? wp_unslash( $post_data['post_content'] ) : '' ),
 			'post_type'    => $content_type,
 			'post_status'  => 'publish',
 		);
@@ -715,8 +720,8 @@ class Extended_LearnDash_Bulk_Create {
 	private function update_content( $post_id, $content_type, $post_data ) {
 		$post_args = array(
 			'ID'           => $post_id,
-			'post_title'   => sanitize_text_field( $post_data['post_title'] ),
-			'post_content' => wp_kses_post( isset( $post_data['post_content'] ) ? $post_data['post_content'] : '' ),
+			'post_title'   => sanitize_text_field( wp_unslash( $post_data['post_title'] ) ),
+			'post_content' => wp_kses_post( isset( $post_data['post_content'] ) ? wp_unslash( $post_data['post_content'] ) : '' ),
 		);
 		$result    = wp_update_post( $post_args, true );
 		if ( is_wp_error( $result ) ) {

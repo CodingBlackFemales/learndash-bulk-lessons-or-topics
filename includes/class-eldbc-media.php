@@ -157,6 +157,7 @@ class ELDBC_Media {
 		$existing_id = self::find_attachment_by_hash( $hash );
 		if ( $existing_id ) {
 			$url = wp_get_attachment_url( $existing_id );
+			$url = $url ? self::url_for_current_site_home( $url ) : '';
 			return $url ? $url : new WP_Error( 'eldbc_url', __( 'Could not resolve attachment URL.', 'extended-learndash-bulk-create' ) );
 		}
 
@@ -197,7 +198,35 @@ class ELDBC_Media {
 		wp_update_attachment_metadata( (int) $attach_id, $meta );
 
 		$url = wp_get_attachment_url( (int) $attach_id );
+		$url = $url ? self::url_for_current_site_home( $url ) : '';
 		return $url ? $url : new WP_Error( 'eldbc_url', __( 'Could not resolve new attachment URL.', 'extended-learndash-bulk-create' ) );
+	}
+
+	/**
+	 * Rebuild an absolute URL using home_url() so the host matches this site (subsite) in multisite.
+	 *
+	 * wp_get_attachment_url() can return the network/main domain when upload baseurl and WP_HOME diverge
+	 * (e.g. cms.* vs academy.* on Lando).
+	 *
+	 * @param string $url Full URL, typically from wp_get_attachment_url().
+	 * @return string
+	 */
+	private static function url_for_current_site_home( $url ) {
+		if ( $url === '' || ! is_string( $url ) ) {
+			return $url;
+		}
+		$parsed = wp_parse_url( $url );
+		if ( empty( $parsed['path'] ) ) {
+			return $url;
+		}
+		$out = home_url( $parsed['path'] );
+		if ( ! empty( $parsed['query'] ) ) {
+			$out .= '?' . $parsed['query'];
+		}
+		if ( ! empty( $parsed['fragment'] ) ) {
+			$out .= '#' . $parsed['fragment'];
+		}
+		return $out;
 	}
 
 	/**
