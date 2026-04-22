@@ -2,7 +2,7 @@
 /**
  * Plugin Name: LearnDash Bulk Lessons Or Topics
  * Description: Adds functionality to bulk create Courses, Lessons, or Topics in LearnDash using a CSV file.
- * Version: 1.2.1
+ * Version: 1.2.2
  * Author: Vlad Tudorie
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -110,9 +110,11 @@ class Extended_LearnDash_Bulk_Create {
 	}
 
 	public function handle_form_submission() {
-		if ( ! isset( $_POST['submit'] ) || ! check_admin_referer( 'extended_learndash_bulk_create', 'extended_learndash_bulk_create_nonce' ) ) {
+		if ( ! isset( $_POST['submit'], $_POST['extended_learndash_bulk_create_nonce'] ) ) {
 			return;
 		}
+
+		check_admin_referer( 'extended_learndash_bulk_create', 'extended_learndash_bulk_create_nonce' );
 
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'extended-learndash-bulk-create' ) );
